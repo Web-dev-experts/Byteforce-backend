@@ -97,7 +97,7 @@ const LEAGUES = [
     order: 13,
   },
   {
-    name: 'Uranium',
+    name: 'UraniumI',
     description:
       'Strategic mindset. You balance long-term vision with execution.',
     icon: 'UraniumI.png',
