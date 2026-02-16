@@ -9,34 +9,34 @@ const leagueSchema = new Schema({
       'Silver',
 
       // Gold tiers
-      'Gold I',
-      'Gold II',
+      'GoldI',
+      'GoldII',
 
       // Cuprite tiers
-      'Cuprite I',
-      'Cuprite II',
-      'Cuprite III',
+      'CupriteI',
+      'CupriteII',
+      'CupriteIII',
 
       // Obsidian tiers
-      'Obsidian I',
-      'Obsidian II',
-      'Obsidian III',
+      'ObsidianI',
+      'ObsidianII',
+      'ObsidianIII',
 
       // Diamond tiers
-      'Diamond I',
-      'Diamond II',
-      'Diamond III',
+      'DiamondI',
+      'DiamondII',
+      'DiamondIII',
 
       // Uranium tiers
-      'Uranium I',
-      'Uranium II',
-      'Uranium III',
+      'UraniumI',
+      'UraniumII',
+      'UraniumIII',
 
       // Aetherium tiers
-      'Aetherium I',
-      'Aetherium II',
-      'Aetherium III',
-      'Aetherium IV',
+      'AetheriumI',
+      'AetheriumII',
+      'AetheriumIII',
+      'AetheriumIV',
     ],
   },
   descritpion: {
