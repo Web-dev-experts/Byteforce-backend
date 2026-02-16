@@ -1,3 +1,9 @@
+require('dotenv').config();
+const mongoose = require('mongoose');
+const cloudinary = require('./config/cloudinary');
+const League = require('./model/Leagues/leagueModel');
+const path = require('path');
+
 const LEAGUES = [
   {
     name: 'Bronze',
@@ -139,24 +145,26 @@ const LEAGUES = [
   },
 ];
 
-const League = require('./model/Leagues/leagueModel');
-
 async function createLeaguesOnce() {
+  const existing = await League.countDocuments();
+  if (existing > 0) return;
   for (let i = 0; i < LEAGUES.length; i++) {
     const league = LEAGUES[i];
+    const imagePath = path.join(__dirname, './public', league.icon);
 
-    await League.findOneAndUpdate(
-      { name: league.name },
-      {
-        ...league,
-        order: i + 1,
-      },
-      { upsert: true, new: true },
-    );
+    const uploaded = await cloudinary.uploader.upload(imagePath, {
+      folder: 'leagues_logo',
+    });
+
+    await League.create({
+      name: league.name,
+      descritpion: league.description,
+      order: league.order,
+      icon: uploaded.secure_url,
+    });
   }
 
   console.log('✅ Leagues created / verified');
-  process.exit();
 }
 
 module.exports = createLeaguesOnce;

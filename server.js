@@ -3,10 +3,10 @@ const runCron = require('./cron/seasonCron.js');
 const app = require('./app.js');
 const { default: mongoose } = require('mongoose');
 const runStreakCron = require('./cron/streakCron.js');
+const createLeaguesOnce = require('createLeagues.js');
 
 const PORT = process.env.PORT || 3000;
 const DB_LINK = process.env.DATABASE;
-
 
 // CONNECTION TO DB
 async function connectDB() {
@@ -14,6 +14,7 @@ async function connectDB() {
     console.log('Connecting to database...');
     await mongoose.connect(DB_LINK);
     console.log('Connected to database successfully!');
+    createLeaguesOnce();
     runCron();
     runStreakCron();
   } catch (err) {
