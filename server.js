@@ -3,7 +3,7 @@ const runCron = require('./cron/seasonCron.js');
 const app = require('./app.js');
 const { default: mongoose } = require('mongoose');
 const runStreakCron = require('./cron/streakCron.js');
-const createLeaguesOnce = require('createLeagues.js');
+const createLeaguesOnce = require('./createLeagues.js');
 
 const PORT = process.env.PORT || 3000;
 const DB_LINK = process.env.DATABASE;
