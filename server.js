@@ -26,6 +26,6 @@ async function connectDB() {
 connectDB();
 
 // SERVER LISTEN
-app.listen(PORT, 'localhost', () => {
+app.listen(PORT,() => {
   console.log(`Server listening on ${PORT}`);
 });
