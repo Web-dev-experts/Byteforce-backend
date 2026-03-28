@@ -1,107 +1,26 @@
 const LeagueSeason = require('../../model/Leagues/leagueSeasonModel');
 const League = require('../../model/Leagues/leagueModel');
 const LeagueUserProgress = require('../../model/Leagues/leagueUserProgress');
-const User = require('../../model/User/userModel');
-const crypto = require('crypto');
 const { default: mongoose } = require('mongoose');
 const { model, Schema } = require('mongoose');
-const { validate } = require('node-cron');
 const Project = require('./projectModel');
 const Subscription = require('../../model/pricing/pricingModel');
+const {
+  calculateXPSF,
+  MAX_ENTRIES_PER_DAY,
+  MIN_XP,
+  MAX_XP,
+  MAX_SF,
+} = require('../../config/configXPSF');
+const verifyGithubCommit = require('../../utils/githubRepoVerify');
+const QuestProgress = require('../../model/Quests/questProgressModel');
+const Battle = require('../../model/Leagues/leagueBattles');
+const War = require('../../model/Leagues/leagueWars');
 
-// CONFIG //
-
-// Max XP for a single entry
-const MAX_XP = 5000;
-const MAX_SF = 50;
-
-// Max entries per day
-const MAX_ENTRIES_PER_DAY = 5;
-
-// Type multipliers
-const TYPE_MULTIPLIERS = {
-  project: 1.2,
-  miniProject: 0.6,
-  exercise: 0.4,
-};
-
-// Activity multipliers
-const ACTIVITY_MULTIPLIERS = {
-  // Core coding
-  coding: 1.2,
-  debugging: 1.1,
-  refactoring: 0.8,
-  testing: 0.6,
-  optimizing: 1.0,
-
-  // Learning
-  learning: 0.7,
-  research: 0.8,
-  readingDocs: 0.6,
-  watchingTutorial: 0.5,
-  experimenting: 0.9,
-
-  // Planning & architecture
-  planning: 0.7,
-  systemDesign: 1.1,
-  databaseDesign: 1.0,
-  apiDesign: 1.0,
-
-  // Problem solving
-  problemSolving: 1.3,
-  algorithmPractice: 1.4,
-  bugHunting: 1.2,
-
-  // Project & delivery
-  featureImplementation: 1.2,
-  integration: 1.0,
-  deployment: 0.8,
-  maintenance: 0.9,
-
-  // Quality & polish
-  codeReview: 0.8,
-  cleanup: 0.6,
-  performanceTuning: 1.1,
-  securityHardening: 1.2,
-
-  // Low impact
-  setup: 0.4,
-  configuration: 0.4,
-  tooling: 0.5,
-  documentation: 0.5,
-};
-
-// SF points per XP (can be tuned)
-const SF_PER_XP = 0.01; // 1 SF per 100 XP
-
-// Minimum XP per entry
-const MIN_XP = 50;
-
-// FUNCTIONS
-// Calculates XP & SF for a single entry based on type, activity, duration, and daily factor
-const BASE_CAP = 3500;
-const GROWTH_RATE = 0.018;
-
-function calculateXPSF(type, activity, duration, numEntry) {
-  const typeMultiplier = TYPE_MULTIPLIERS[type] || 1;
-  const activityMultiplier = ACTIVITY_MULTIPLIERS[activity] || 1;
-
-  // Exponential growth curve
-  const baseXP = BASE_CAP * (1 - Math.exp(-GROWTH_RATE * duration));
-
-  // Daily diminishing returns
-  const dailyFactor = Math.max(0.6, 1 - 0.12 * (numEntry - 1));
-
-  const xp = baseXP * typeMultiplier * activityMultiplier * dailyFactor;
-
-  const finalXP = Math.max(MIN_XP, Math.round(xp));
-
-  const sf = Math.round(finalXP * SF_PER_XP);
-
-  return { xp: finalXP, sf };
-}
-
-// Entry Schema
+// ── Schema ────────────────────────────────────────────────
+// accepted: false means the entry was rejected (too short, too long,
+// or daily limit exceeded). Rejected entries are hidden by default (select: false)
+// and their XP/SF are either 0 or negative penalties.
 const entrySchema = new Schema(
   {
     title: {
@@ -123,9 +42,9 @@ const entrySchema = new Schema(
       required: [true, 'You must precise the entry type!'],
       enum: ['project', 'miniProject', 'exercise'],
       validate: {
+        // Cross-field validation: 'project' type requires a linked projectId.
         validator: function (v) {
-          console.log(v, v === 'project' && this.projectId);
-          if (v === 'project' && this.projectId) return false; // project must be linked
+          if (v === 'project' && !this.projectId) return false;
           return true;
         },
         message:
@@ -147,7 +66,7 @@ const entrySchema = new Schema(
         'refactoring',
         'debuggingToolsPractice',
         'readingDocs',
-        'watchingTutorials',
+        'watchingTutorial',
         'structuringLearning',
         'noteTaking',
         'algorithmStudy',
@@ -175,7 +94,6 @@ const entrySchema = new Schema(
     endDate: Date,
     duration: {
       type: Number,
-      max: 120,
     },
     status: {
       type: String,
@@ -211,7 +129,8 @@ const entrySchema = new Schema(
       ],
       default: ['computerScience'],
     },
-    accepted: { type: Boolean, select: false, default: true },
+    accepted: { type: Boolean, default: true },
+    repoUrl: { type: String },
   },
   {
     timestamps: true,
@@ -220,7 +139,11 @@ const entrySchema = new Schema(
   },
 );
 
-// Count how many accepted entries the user has today
+// ── countTodayEntries ─────────────────────────────────────
+// Returns the number of accepted entries the user has finished today.
+// Used to enforce the daily entry cap and apply diminishing returns.
+// "Today" is determined by midnight boundaries in the server's local timezone —
+// users in different timezones may get a different reset time than expected.
 entrySchema.methods.countTodayEntries = async function () {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
@@ -235,8 +158,25 @@ entrySchema.methods.countTodayEntries = async function () {
   });
 };
 
-// Finish an entry, calculate XP/SF, and update user
+// ── finishEntry ───────────────────────────────────────────
+// The core method. Called when a user ends their session.
+// Handles all edge cases: already finished, too many today, too short,
+// too long (with penalty), then normal completion with XP/SF calculation.
+//
+// Flow:
+//   1. Count today's entries
+//   2. Guard: already finished?
+//   3. Guard: daily limit exceeded? → reject, 0 XP
+//   4. Calculate duration
+//   5. Guard: < 1 min? → reject, 0 XP
+//   6. Guard: > 240 min? → reject, penalty XP (-500 / -5 SF)
+//   7. Cap duration at 120 min
+//   8. Calculate XP/SF via configXPSF
+//   9. Apply subscription XP bonus
+//  10. Update user, leagueUserProgress, project
+//  11. Recalculate ranks
 entrySchema.methods.finishEntry = async function () {
+  const User = mongoose.model('User');
   const entriesThisDay = await this.countTodayEntries();
 
   // GUARD: Prevent finishing an entry twice
@@ -269,39 +209,144 @@ entrySchema.methods.finishEntry = async function () {
     return;
   }
 
-  // Too long entry (>4h)
+  const user = await User.findById(this.user);
+  if (!user) return;
+  const userLeague = await League.findById(user.league);
+  if (!userLeague) return;
+  const questProgress = await QuestProgress.find({ user: user._id });
+  const runningSeason = await LeagueSeason.findOne({
+    league: userLeague._id,
+    status: 'running',
+  });
+  if (!runningSeason) return;
+  const leagueUserProgress = await LeagueUserProgress.findOne({
+    user: this.user,
+    leagueSeason: runningSeason._id,
+  });
+  if (!leagueUserProgress) return;
+  const battle = await Battle.findOne({
+    status: 'active',
+    league: runningSeason.league,
+    leagueSeason: runningSeason._id,
+    $or: [{ playerOne: user._id }, { playerTwo: user._id }],
+  });
+  const war = await War.findOne({
+    status: 'active',
+    league: runningSeason.league,
+    leagueSeason: runningSeason._id,
+    $or: [{ challenger: user._id }, { opponent: user._id }],
+  });
+  // Too long entry (>4h) — penalizes the user with negative XP and SF
+  if (!this.repoUrl || this.repoUrl.length === 0) {
+    this.XPGranted = Math.floor(this.XPGranted / 2);
+    this.SFGranted = Math.floor(this.SFGranted / 2);
+  } else {
+    let repoToCheck = this.repoUrl;
+    if (this.type === 'project') {
+      const project = await Project.findById(this.projectId);
+      if (project.status !== 'finished') {
+        repoToCheck = project ? project.repoUrl : this.repoUrl;
+      }
+    }
+    const threshold =
+      this.duration <= 30
+        ? 20
+        : this.duration > 30 && this.duration < 60
+          ? 50
+          : 100;
+    const verified = await verifyGithubCommit(
+      user.githubAccessToken,
+      repoToCheck,
+      this.startDate,
+      this.endDate,
+      threshold,
+    );
+    if (!verified) {
+      this.XPGranted = Math.floor(this.XPGranted / 2);
+      this.SFGranted = Math.floor(this.SFGranted / 2);
+    }
+  }
   if (Number(this.duration) > 240) {
-    const user = await User.findById(this.user);
     this.status = 'finished';
     this.accepted = false;
     this.XPGranted = -500;
     this.SFGranted = -5;
 
-    if (!user) return;
-    const userLeague = await League.findById(user.league);
-    if (!userLeague) return;
-
-    const runningSeason = await LeagueSeason.findOne({
-      league: userLeague._id,
-      status: 'running',
-    });
-    const leagueUserProgress = await LeagueUserProgress.findOne({
-      user: this.user,
-      leagueSeason: runningSeason._id,
-    });
+    // Guard added — if no season is running, skip the penalty application.
+    if (battle) {
+      battle.playerOneProgress = battle.playerOneProgress || {
+        XP: 0,
+        syntaxForces: 0,
+        rankGained: 0,
+        levelGained: 0,
+        streak: 0,
+      };
+      battle.playerTwoProgress = battle.playerTwoProgress || {
+        XP: 0,
+        syntaxForces: 0,
+        rankGained: 0,
+        levelGained: 0,
+        streak: 0,
+      };
+      if (battle.playerOne.equals(user._id)) {
+        battle.playerOneProgress.XP += this.XPGranted;
+        battle.playerOneProgress.syntaxForces += this.SFGranted;
+      } else {
+        battle.playerTwoProgress.XP += this.XPGranted;
+        battle.playerTwoProgress.syntaxForces += this.SFGranted;
+      }
+      await battle.save();
+    }
+    if (war) {
+      war.challengerProgress = war.challengerProgress || {
+        XP: 0,
+        syntaxForces: 0,
+        rankGained: 0,
+        levelGained: 0,
+        streak: 0,
+      };
+      war.opponentProgress = war.opponentProgress || {
+        XP: 0,
+        syntaxForces: 0,
+        rankGained: 0,
+        levelGained: 0,
+        streak: 0,
+      };
+      if (war.challenger.equals(user._id)) {
+        war.challengerProgress.XP += this.XPGranted;
+        war.challengerProgress.syntaxForces += this.SFGranted;
+      } else {
+        war.opponentProgress.XP += this.XPGranted;
+        war.opponentProgress.syntaxForces += this.SFGranted;
+      }
+      await war.save();
+    }
     user.XP += this.XPGranted;
     user.syntaxForces += this.SFGranted;
     leagueUserProgress.XP += this.XPGranted;
     leagueUserProgress.syntaxForces += this.SFGranted;
-
+    await user.selectAttribute();
+    await user.selectStreakAttribute();
     await user.save();
     await leagueUserProgress.save();
-    await LeagueUserProgress.recalculateRanks(userLeague);
+    await LeagueUserProgress.recalculateRanks(runningSeason._id);
+    const questProgress = await QuestProgress.find({ user: user._id });
+    if (questProgress.length === 0) {
+      await this.save();
+      return;
+    }
+    for (const quest of questProgress) {
+      if (quest.progressType === 'XP') quest.progress += this.XPGranted;
+      if (quest.progressType === 'syntaxForces')
+        quest.progress += this.SFGranted;
+      await quest.save();
+    }
     await this.save();
     return;
   }
 
-  // Cap duration at 120 minutes
+  // Cap duration at 120 minutes for XP calculation purposes.
+  // Sessions longer than 2h still count but are scored as if they were 2h.
   if (Number(this.duration) > 120) this.duration = 120;
   this.status = 'finished';
 
@@ -312,10 +357,9 @@ entrySchema.methods.finishEntry = async function () {
     this.duration,
     entriesThisDay,
   );
-  const user = await User.findById(this.user);
   if (!user) return;
 
-  // Clamp XP & SF to min/max
+  // Clamp XP & SF to min/max values defined in configXPSF
   const clampedXP = Math.min(MAX_XP, Math.max(MIN_XP, xp));
   const clampedSF = Math.min(MAX_SF, Math.max(0, sf));
 
@@ -325,21 +369,16 @@ entrySchema.methods.finishEntry = async function () {
   this.XPGranted = Math.floor(clampedXP) * bonus;
   this.SFGranted = Math.floor(clampedSF);
 
-  // Update user's XP, SF, and streak
-  if (entriesThisDay < 1 && this.duration > 29) user.streak += 1;
-  const userLeague = await League.findById(user.league);
-  if (!userLeague) return;
+  if (entriesThisDay >= 1 && this.duration > 1) {
+    // Increment streak only on the first qualifying entry of the day (>= 30 min)
+    user.streak += 1;
+    await user.save();
+  }
 
-  const runningSeason = await LeagueSeason.findOne({
-    league: userLeague._id,
-    status: 'running',
-  });
-  let leagueUserProgress = await LeagueUserProgress.findOne({
-    user: this.user,
-    leagueSeason: runningSeason._id,
-  });
+  // If the user has no progress record for this season, create one.
+  // This can happen if a user joins mid-season.
   if (!leagueUserProgress) {
-    const usersCount = await this.constructor.countDocuments({
+    const usersCount = await User.countDocuments({
       league: userLeague._id,
     });
 
@@ -357,20 +396,95 @@ entrySchema.methods.finishEntry = async function () {
   leagueUserProgress.XP += this.XPGranted;
   leagueUserProgress.syntaxForces += this.SFGranted;
 
+  // Link this entry to its project and accumulate project-level XP/SF.
   const project = await Project.findById(this.projectId);
   if (project && this.projectId) {
-    console.log(this._id);
+    const project = await Project.findById(this.projectId);
+    if (project.status !== 'finished') {
+      project.entries.push(this._id);
+      project.XPGained += this.XPGranted;
+      project.SFGained += this.SFGranted;
 
-    project.entries.push(this._id);
-    project.XPGained += this.XPGranted;
-    project.SFGained += this.SFGranted;
-
-    await project.save();
+      await project.save();
+    }
   }
-
+  await user.selectAttribute();
+  await user.selectStreakAttribute();
   await user.save();
   await leagueUserProgress.save();
-  await leagueUserProgress.recalculateRanks(runningSeason._id);
+  // Recalculates the rank of every user in this season based on syntaxForces.
+  const previousRank = leagueUserProgress.rank;
+  await LeagueUserProgress.recalculateRanks(runningSeason._id);
+  const currentRank = leagueUserProgress.rank;
+
+  if (battle) {
+    battle.playerOneProgress = battle.playerOneProgress || {
+      XP: 0,
+      syntaxForces: 0,
+      rankGained: 0,
+      levelGained: 0,
+      streak: 0,
+    };
+    battle.playerTwoProgress = battle.playerTwoProgress || {
+      XP: 0,
+      syntaxForces: 0,
+      rankGained: 0,
+      levelGained: 0,
+      streak: 0,
+    };
+    if (battle.playerOne.equals(user._id)) {
+      battle.playerOneProgress.XP += this.XPGranted;
+      battle.playerOneProgress.syntaxForces += this.SFGranted;
+      battle.playerOneProgress.rankGained += currentRank - previousRank;
+    } else {
+      battle.playerTwoProgress.XP += this.XPGranted;
+      battle.playerTwoProgress.syntaxForces += this.SFGranted;
+      battle.playerTwoProgress.rankGained += currentRank - previousRank;
+    }
+    await battle.save();
+  }
+  if (war) {
+    war.challengerProgress = war.challengerProgress || {
+      XP: 0,
+      syntaxForces: 0,
+      rankGained: 0,
+      levelGained: 0,
+      streak: 0,
+    };
+    war.opponentProgress = war.opponentProgress || {
+      XP: 0,
+      syntaxForces: 0,
+      rankGained: 0,
+      levelGained: 0,
+      streak: 0,
+    };
+    if (war.challenger.equals(user._id)) {
+      war.challengerProgress.XP += this.XPGranted;
+      war.challengerProgress.syntaxForces += this.SFGranted;
+      war.challengerProgress.rankGained += currentRank - previousRank;
+    } else {
+      war.opponentProgress.XP += this.XPGranted;
+      war.opponentProgress.syntaxForces += this.SFGranted;
+      war.opponentProgress.rankGained += currentRank - previousRank;
+    }
+    await war.save();
+  }
+
+  if (questProgress.length === 0) {
+    await this.save();
+    return;
+  }
+
+  for (const quest of questProgress) {
+    if (quest.expiresAt > this.endDate) {
+      if (quest.progressType === 'XP') quest.progress += this.XPGranted;
+      if (quest.progressType === 'syntaxForces')
+        quest.progress += this.SFGranted;
+      if (quest.progressType === 'entries') quest.progress += 1;
+
+      await quest.save(); // Now safely awaited!
+    }
+  }
 
   await this.save();
 };

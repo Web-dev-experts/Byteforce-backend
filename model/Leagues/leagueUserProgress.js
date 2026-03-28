@@ -1,6 +1,4 @@
 const { model, Schema, default: mongoose } = require('mongoose');
-const LeagueSeason = require('./leagueSeasonModel');
-const League = require('./leagueModel');
 
 const leagueUserProgress = new Schema({
   leagueSeason: {
@@ -21,21 +19,27 @@ const leagueUserProgress = new Schema({
   },
   rank: {
     type: Number,
+    // Rank is not set on creation — assigned by recalculateRanks.
   },
   daysActive: {
     type: Number,
+    // Incremented by seasonCron when a user finishes a qualifying entry.
   },
 });
 
-leagueUserProgress.methods.recalculateRanks = async function (leagueSeasonId) {
+// ── recalculateRanks (static) ─────────────────────────────
+// Fetches all progress documents for a season, sorts by SF descending
+// (ties broken by updatedAt ascending — earlier updaters rank higher),
+// then bulk-updates all rank fields atomically.
+// Fixed from instance method to static so it can be called as:
+// LeagueUserProgress.recalculateRanks(seasonId)
+leagueUserProgress.statics.recalculateRanks = async function (leagueSeasonId) {
   const progresses = await LeagueUserProgress.find({
     leagueSeason: leagueSeasonId,
   }).sort({
     syntaxForces: -1,
     updatedAt: 1, // deterministic tie-breaker
   });
-
-  console.log(progresses);
 
   const bulkOps = progresses.map((progress, index) => ({
     updateOne: {
@@ -49,6 +53,7 @@ leagueUserProgress.methods.recalculateRanks = async function (leagueSeasonId) {
   }
 };
 
+// Prevents duplicate progress records per user per season.
 leagueUserProgress.index({ user: 1, leagueSeason: 1 }, { unique: true });
 
 const LeagueUserProgress = model('LeagueUserProgress', leagueUserProgress);

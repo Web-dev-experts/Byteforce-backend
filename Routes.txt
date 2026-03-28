@@ -1,0 +1,57 @@
+============================================================
+Routes — summary
+
+entriesRoutes.js  → /api/v1/entries
+  POST   /start                    start a new entry
+  POST   /end                      end the current entry
+  PATCH  /edit/:entryId            edit an entry
+  DELETE /delete/:entryId          delete an entry + reverse XP
+  GET    /getMyEntry/:entryId      get one entry
+  GET    /getAllEntries             get all entries
+  POST   /createProject            create a project
+  GET    /finishProject/:projectId mark project finished
+  GET    /getProject/:projectId    get a project
+  DELETE /deleteProject/:projectId delete a project
+  PATCH  /editProject/:projectId   edit a project
+
+leagueRoutes.js   → /api/v1/leagues
+  GET /leaderboard/:leagueName          live leaderboard
+  GET /archive/:seasonName              user's own past seasons
+  GET /archiveLeaderboard/:seasonName   past season leaderboard
+  GET /allLeagues                       all 20 leagues
+  GET /allCurrentSeasons                all running seasons
+  GET /:league                          single league by ID
+  GET /myCurrentSeason                  user's current season
+  GET /myProgress                       user's season progress
+
+pricingRoutes.js  → /api/v1/pricing
+  POST   /createPricing           admin only
+  GET    /getAllPricings           all plans
+  GET    /getPricing/:pricingId   single plan
+  DELETE /deletePricing/:pricingId admin only
+  PATCH  /editPricing/:pricingId  admin only
+
+subscriptionRoutes.js → /api/v1/pricing/subscription
+  POST /webhook   raw body — Stripe webhook (no auth)
+  POST /checkout  create Stripe checkout session
+  POST /cancel    cancel subscription
+
+userRoutes.js     → /api/v1/auth
+  POST  /signup                   create account
+  POST  /verifyAccount            verify email code
+  POST  /login                    login
+  GET   /logout                   logout (clears cookie)
+  POST  /forgotPassword           send reset code
+  POST  /reset-code-check         verify reset code, get reset token
+  PATCH /resetPassword            set new password
+  GET   /google                   initiate Google OAuth
+  GET   /google/callback          Google OAuth callback
+  GET   /github                   initiate GitHub OAuth
+  GET   /github/callback          GitHub OAuth callback
+  GET   /me                       get own profile
+  PATCH /updateMe                 update name/field/picture
+  PATCH /updateMe/photo           upload new photo
+  DELETE /deleteMe                delete account
+  PATCH  /deactivateMe            deactivate account
+============================================================
+ 

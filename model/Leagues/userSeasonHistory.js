@@ -17,6 +17,8 @@ const userHistorySchema = new Schema(
       ref: 'League',
       required: true,
     },
+    // Denormalized season/league names so history is readable even if
+    // the original LeagueSeason document is deleted.
     seasonName: {
       type: String,
       required: true,
@@ -48,9 +50,14 @@ const userHistorySchema = new Schema(
       type: Boolean,
       default: false,
     },
+    highestLevel: { type: Number },
+    highestStreak: { type: Number },
+    highestLeague: { type: Number },
   },
   { timestamps: true },
 );
+
+// Prevents creating duplicate history records for the same user and season.
 userHistorySchema.index({ user: 1, leagueSeason: 1 }, { unique: true });
 
 const UserSeasonHistory = model('UserSeasonHistory', userHistorySchema);

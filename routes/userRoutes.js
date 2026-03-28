@@ -35,8 +35,20 @@ router.get(
 router.get('/github', authController.githubAuth);
 
 router.get(
+  '/github/connect',
+  authController.protect,
+  authController.githubConnect,
+);
+
+router.get(
+  '/github/connect/callback',
+  passport.authenticate('github-connect', { session: false }),
+  authController.githubConnectCallback,
+);
+
+router.get(
   '/github/callback',
-  passport.authenticate('github', { session: false }),
+  passport.authenticate('github-auth', { session: false }),
   authController.githubCallback,
 );
 

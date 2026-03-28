@@ -15,7 +15,7 @@ const LeagueSeasonSchema = new Schema({
   },
   endDate: {
     type: Date,
-    default: Date.now + 30 * 24 * 60 * 60 * 1000,
+    default: () => Date.now() + 30 * 24 * 60 * 60 * 1000,
   },
   seasonNumber: {
     type: Number,
@@ -27,14 +27,13 @@ const LeagueSeasonSchema = new Schema({
   status: {
     type: String,
     default: 'running',
-    status: {
-      type: String,
-      enum: ['scheduled', 'running', 'finished', 'archived'],
-      required: true,
-    },
+    enum: ['scheduled', 'running', 'finished', 'archived'],
+    required: true,
   },
 });
 
+// Ensures only one running season can exist per league at a time.
+// partialFilterExpression means the unique constraint only applies to status: 'running' docs.
 LeagueSeasonSchema.index(
   { league: 1, status: 1 },
   {
@@ -43,9 +42,10 @@ LeagueSeasonSchema.index(
   },
 );
 
+// Guard against modifying archived seasons.
 LeagueSeasonSchema.pre('save', function () {
-  if (!this.isNew && this.leagueSeasonStatus === 'archived') {
-    return next(new Error('Archived season is immutable'));
+  if (!this.isNew && this.status === 'archived') {
+    throw new Error('Archived season is immutable');
   }
 });
 

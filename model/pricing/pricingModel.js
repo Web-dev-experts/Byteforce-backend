@@ -1,6 +1,8 @@
 const { Schema, model } = require('mongoose');
-const { validate } = require('node-cron');
-const { isCurrency } = require('validator');
+
+// Plan names must match what the frontend displays and what Stripe products are named.
+// XPBonus is a multiplier applied to XP earned — confirm whether it's a flat
+// addition or a direct multiplier in entryModel.finishEntry().
 
 const pricingSchema = new Schema({
   name: {
@@ -55,33 +57,17 @@ const pricingSchema = new Schema({
     default: 'active',
     enum: ['active', 'expired', 'canceled'],
   },
-  startDate: {
-    type: Date,
-    default: Date.now,
-  },
-  endDate: {
-    type: Date,
-  },
+  // stripePriceId links this plan to a specific Stripe Price object.
+  // This is used in createCheckoutSession to create the line item.
   stripePriceId: {
     type: String,
     required: true,
   },
 });
 
-pricingSchema.pre('save', function () {
-  if (!this.isNew) return;
-
-  if (this.interval === 'monthly') {
-    const start = new Date(this.startDate);
-    this.endDate = start.setMonth(start.getMonth() + 1);
-  }
-  if (this.interval === 'yearly') {
-    const nextYear = new Date(this.startDate);
-    nextYear.setFullYear(nextYear.getFullYear() + 1);
-    this.endDate = nextYear;
-  }
-  if (this.interval === 'lifetime') this.endDate = undefined;
-});
+// Automatically computes endDate when a new plan document is created.
+// Only runs on isNew — plan documents are templates and should not
+// recalculate on every save.
 
 const Subscription = model('Subscription', pricingSchema);
 

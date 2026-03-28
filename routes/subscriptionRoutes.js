@@ -12,12 +12,14 @@ router.post(
 
 // Other subscription routes can use express.json()
 router.use(express.json());
+// CHECKOUT SUBSCRIPTION
 router.post(
   '/checkout',
   authController.protect,
   authController.protectVerified,
   subscriptionController.createCheckoutSession,
 );
+// CANCEL SUBSCRIPTION
 router.post(
   '/cancel',
   authController.protect,

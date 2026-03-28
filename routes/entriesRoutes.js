@@ -2,6 +2,7 @@ const express = require('express');
 const authController = require('../controller/Authentication/authController');
 const entryController = require('../controller/Entries/entryController');
 const projectController = require('../controller/Entries/projectController');
+const questController = require('../controller/Quests/questController');
 const router = express.Router();
 
 // CREATE & END AN ENTRY
@@ -62,7 +63,7 @@ router
   );
 router
   .route('/finishProject/:projectId')
-  .get(
+  .patch(
     authController.protect,
     authController.protectVerified,
     projectController.finishProject,
@@ -87,6 +88,15 @@ router
     authController.protect,
     authController.protectVerified,
     projectController.editProject,
+  );
+
+// CREATE PROJECT QUESTS
+router
+  .route('/createQuest/:projectId')
+  .post(
+    authController.protect,
+    authController.protectVerified,
+    questController.createProjectQuest,
   );
 
 module.exports = router;

@@ -1,11 +1,11 @@
 const nodeCron = require('node-cron');
 const resetStreaks = require('../utils/streakManager');
 
-// Run every day at midnight
 function runStreakCron() {
-  nodeCron.schedule('0 0 * * *', () => {
+  nodeCron.schedule('0 0 * * *', async () => {
     console.log('Running daily streak reset...');
-    resetStreaks();
+    // Errors inside it are caught internally in streakManager.js.
+    await resetStreaks();
   });
 }
 
